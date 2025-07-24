@@ -1,0 +1,168 @@
+import os
+import sys
+import speech_recognition as sr
+import google.generativeai as genai
+
+from PyQt6.QtWidgets import (
+    QApplication, QMainWindow, QLabel, QPushButton, QLineEdit, QTextEdit, QVBoxLayout, QWidget, QHBoxLayout
+)
+from PyQt6.QtCore import QThread, pyqtSignal, Qt
+from PyQt6.QtGui import QPixmap, QFont
+
+# Gemini API Setup - replace with your key, or read from env/config!
+GEMINI_API_KEY = "AIzaSyB8_-AYOyz_z2btUm20P5ma0hqRCJaNuEg"  # <-- Place your Gemini key here
+genai.configure(api_key=GEMINI_API_KEY)
+
+# ------------ Gemini interaction function -------------
+def gemini_response(prompt):
+    try:
+        model = genai.GenerativeModel("gemini-1.5-flash")  # Use Gemini 2.0 Flash model if available
+        response = model.generate_content(prompt)
+        return response.text.strip() if hasattr(response, 'text') else str(response).strip()
+    except Exception as e:
+        return f"Gemini API error: {e}"
+
+# ------------ Voice Thread -------------
+class VoiceRecognitionThread(QThread):
+    result_signal = pyqtSignal(str)
+    error_signal = pyqtSignal(str)
+
+    def run(self):
+        resp = listen_voice_command()
+        self.result_signal.emit(resp)
+
+# ------------ Listen For Voice -------------
+def listen_voice_command():
+    recognizer = sr.Recognizer()
+    try:
+        with sr.Microphone() as source:
+            return "🎤 Listening… (say 'ARIA' to activate)"  # UI feedback
+    except Exception as e:
+        return f"Microphone error: {e}"
+
+# Separate function to listen and then process after button press
+def process_voice_command():
+    recognizer = sr.Recognizer()
+    try:
+        with sr.Microphone() as source:
+            recognizer.adjust_for_ambient_noise(source)
+            audio = recognizer.listen(source, timeout=5, phrase_time_limit=6)
+            text = recognizer.recognize_google(audio)
+            if "aria" in text.lower():
+                command = text.lower().replace("aria", "").strip()
+                return handle_command(command)
+            else:
+                return "Say 'ARIA' to activate."
+    except sr.UnknownValueError:
+        return "Sorry, I didn't catch that."
+    except sr.RequestError as e:
+        return f"Speech Recognition API error: {e}"
+    except Exception as e:
+        return f"Microphone error: {e}"
+
+# ------------ Command Handler -------------
+def handle_command(command):
+    if not command.strip():
+        return "Please type or say a command."
+    elif "schedule" in command:
+        return "🗓️ Schedule features are coming soon!"
+    elif "budget" in command:
+        return "💸 Budget tracker coming soon!"
+    else:
+        # Any other query goes to Gemini
+        return gemini_response(command)
+
+# ------------ Main GUI -------------
+class ARIA_GUI(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("ARIA: Your Smart Assistant")
+        self.setGeometry(200, 80, 950, 700)
+        self.setStyleSheet("""
+            QMainWindow { background-color: #191c24;}
+            QLabel, QPushButton, QLineEdit { color: white;}
+        """)
+        self.initUI()
+
+    def initUI(self):
+        # Layouts
+        main_widget = QWidget(self)
+        self.setCentralWidget(main_widget)
+        main_layout = QVBoxLayout(main_widget)
+        main_layout.setContentsMargins(60, 40, 60, 30)
+        main_layout.setSpacing(25)
+
+        # -- Background Logo
+        logo = QLabel(self)
+        logo_pixmap = QPixmap("images.jpg").scaledToWidth(390, Qt.TransformationMode.SmoothTransformation)
+        logo.setPixmap(logo_pixmap)
+        logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        main_layout.addWidget(logo)
+
+        # -- Welcome Text
+        self.label = QLabel("👋 <b>Welcome to ARIA</b>", self)
+        self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.label.setFont(QFont("Segoe UI", 22, QFont.Weight.Bold))
+        main_layout.addWidget(self.label)
+
+        # -- Conversation Box
+        self.conversation = QTextEdit(self)
+        self.conversation.setFont(QFont("Segoe UI", 15))
+        self.conversation.setReadOnly(True)
+        self.conversation.setStyleSheet("background-color: #23263b; border-radius: 8px; padding: 12px;")
+        main_layout.addWidget(self.conversation, 3)
+
+        # -- Input & Buttons
+        input_layout = QHBoxLayout()
+        self.text_input = QLineEdit(self)
+        self.text_input.setPlaceholderText("Type your command (try 'What is Quantum Computing?' or just ask)")
+        self.text_input.setFont(QFont("Segoe UI", 15))
+        self.text_input.setStyleSheet("border-radius: 6px; padding: 8px; background: #23263b;")
+        input_layout.addWidget(self.text_input, 4)
+
+        self.text_send_btn = QPushButton("Send", self)
+        self.text_send_btn.setStyleSheet("background: #1e90ff; border-radius:5px; font-size:16px;")
+        self.text_send_btn.clicked.connect(self.handle_text_command)
+        input_layout.addWidget(self.text_send_btn, 1)
+
+        self.voice_btn = QPushButton("🎤 Voice", self)
+        self.voice_btn.setStyleSheet("background: #e9436c; border-radius:5px; font-size:16px;")
+        self.voice_btn.clicked.connect(self.handle_voice)
+        input_layout.addWidget(self.voice_btn, 1)
+
+        main_layout.addLayout(input_layout)
+
+    # ----- Text Input -----
+    def handle_text_command(self):
+        cmd = self.text_input.text()
+        if cmd.strip():
+            self.append_conversation("You: " + cmd)
+            response = handle_command(cmd)
+            self.append_conversation("ARIA: " + response)
+            self.label.setText("👋 <b>ARIA Ready!</b>")
+            self.text_input.clear()
+        else:
+            self.label.setText("Type a question, or use Voice!")
+
+    # ----- Voice Activation -----
+    def handle_voice(self):
+        self.voice_btn.setText("🎤 Listening...")
+        QApplication.processEvents()
+        response = process_voice_command()
+        self.append_conversation("ARIA: " + response)
+        self.label.setText("👋 <b>ARIA Ready!</b>")
+        self.voice_btn.setText("🎤 Voice")
+
+    # ----- Conversation Box Helper -----
+    def append_conversation(self, text):
+        self.conversation.append(text)
+
+# ------------ MAIN ------------
+def main():
+    app = QApplication(sys.argv)
+    win = ARIA_GUI()
+    win.show()
+    sys.exit(app.exec())
+
+if __name__ == "__main__":
+    main()
